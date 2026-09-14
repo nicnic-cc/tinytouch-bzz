@@ -45,9 +45,8 @@ PASSWORD_SERVICE = "tinyTouch"
 CURRENT_PROTOCOL = 6
 OTA_CHUNK_SIZE = 3072
 OTA_WRITE_WINDOW = 8
-RELEASE_DOWNLOAD_URL = "https://github.com/ZimengXiong/tinyTouch/releases/download"
-LATEST_RELEASE_URL = "https://github.com/ZimengXiong/tinyTouch/releases/latest/download"
-FACTORY_FLASH_URL = "https://docs.tinytouch.dev/flash"
+RELEASE_DOWNLOAD_URL = "https://github.com/nicnic-cc/tinytouch-bzz/releases/download"
+LATEST_RELEASE_URL = "https://github.com/nicnic-cc/tinytouch-bzz/releases/latest/download"
 TLS = ssl.create_default_context(cafile=certifi.where())
 VERBOSE = False
 
@@ -699,7 +698,7 @@ def status(port: str) -> dict[str, str]:
 
 def protocol6(device: dict[str, str]) -> None:
     if not device.get("firmware"):
-        raise ToolError(f"The device did not report a firmware version. Flash it at {FACTORY_FLASH_URL}.")
+        raise ToolError("The device did not report a firmware version. Run 'tinytouch rom' to flash it.")
     try:
         protocol = int(device.get("protocol", "0"))
     except ValueError as exc:
