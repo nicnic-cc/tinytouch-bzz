@@ -45,9 +45,8 @@ espsecure.py generate_signing_key --version 2 \
   firmware/tiny_touch_unified/secure_boot_signing_key.pem
 ```
 
-Skip this if you're only flashing pre-built binaries (e.g. from
-https://alpacaengineer.ing/tinytouch/batch-0/flash/) rather than building
-from source.
+Skip this if you're only flashing pre-built binaries (run `tinytouch update`
+to pull the latest release) rather than building from source.
 
 ## 6. Build (and optionally flash)
 
@@ -57,9 +56,7 @@ With the environment activated, from the repo root:
 ./firmware/build-and-flash --build-only
 ```
 
-Drop `--build-only` to also flash a connected ESP32-S3 board. See
-[`build-and-flash`](build-and-flash) and
-[`tiny_touch_unified/README.md`](tiny_touch_unified/README.md) for details.
+Drop `--build-only` to also flash a connected ESP32-S3 board.
 
 For full setup details or troubleshooting, see Espressif's own docs:
 https://docs.espressif.com/projects/esp-idf/en/release-v5.3/esp32/get-started/linux-macos-setup.html
