@@ -15,7 +15,6 @@ directly. This helper only runs when a device is paired in HID mode.
 | `tinytouch_helper.py` | entry point. Serial protocol, event auth, HID key injection, multi-device manager |
 | `tinytouch_keychain.py` | thin `Security.framework` wrapper (via `ctypes`) for reading/writing Keychain items |
 | `tinytouch_runtime.py` | shared low-level bits: atomic file writes, the single-instance lease, backoff policy, serial frame decoding, structured diagnostics |
-| `launchd/com.tinytouch.helper.plist` | template LaunchAgent definition installed by the root `tinytouch` CLI |
 | `requirements.txt` | runtime deps for running the helper from source (`pyserial`, `esptool`, `certifi`) |
 | `requirements-bootstrap.txt` / `requirements-release.txt` | pinned, hash-locked deps used only by the release build ([../../packaging/build-standalone-macos.sh](../../packaging/build-standalone-macos.sh)) to produce the standalone `tinytouch` binary via PyInstaller |
 
