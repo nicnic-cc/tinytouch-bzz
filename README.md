@@ -1,4 +1,4 @@
-**this is a fork of [ZimengXiong/tinyTouch](https://github.com/ZimengXiong/tinyTouch)**, based on upstream 0.1.24.
+**this is a fork of [ZimengXiong/tinyTouch](https://github.com/ZimengXiong/tinyTouch)**, based on upstream 0.1.26.
 See [changed from upstream](#changed-from-upstream) for what's different here, and [FORK.md](.claude/FORK.md) for how the fork is maintained.
 
 # tinytouch-bzz
