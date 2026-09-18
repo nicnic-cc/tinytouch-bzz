@@ -26,8 +26,10 @@ static const uint8_t FP_LED_WHITE = 0x01 | 0x02 | 0x04;
 static const uint8_t FP_LED_FUNC_STEADY = 3;
 static const uint8_t FP_LED_FUNC_OFF = 4;
 static const uint32_t SUCCESS_BUZZ_MS = 120;
-static const uint32_t FAIL_BUZZ_MS = 70;
-static const uint32_t FAIL_GAP_MS = 90;
+// A coin ERM needs roughly 100 ms to spin up to full amplitude, so shorter
+// pulses feel weak and the gap must let it stop or the two buzzes blur.
+static const uint32_t FAIL_BUZZ_MS = 120;
+static const uint32_t FAIL_GAP_MS = 150;
 static const uint32_t RESULT_HOLD_MS = 350;
 
 static SemaphoreHandle_t fp_mutex;
