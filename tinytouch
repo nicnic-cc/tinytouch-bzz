@@ -29,7 +29,31 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
-import certifi
+try:
+    import certifi
+except ImportError:
+    # A git checkout run with the system Python has none of the dependencies.
+    # Build the private .venv once and restart inside it. The release binary
+    # bundles everything, and an import as a module must not re-execute.
+    _venv = Path(__file__).resolve().parent / ".venv"
+    _python = _venv / "bin" / "python"
+    if (
+        __name__ != "__main__"
+        or getattr(sys, "frozen", False)
+        or Path(sys.prefix).resolve() == _venv.resolve()
+    ):
+        raise
+    print("Preparing tinyTouch's private Python environment (first run only)...", flush=True)
+    if not _python.exists():
+        subprocess.run([sys.executable, "-m", "venv", str(_venv)], check=True)
+    subprocess.run(
+        [
+            str(_python), "-m", "pip", "install", "-q", "--disable-pip-version-check",
+            "-r", str(_venv.parent / "software" / "macos-helper" / "requirements.txt"),
+        ],
+        check=True,
+    )
+    os.execv(str(_python), [str(_python), str(Path(__file__).resolve()), *sys.argv[1:]])
 
 FROZEN = bool(getattr(sys, "frozen", False))
 ROOT = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).resolve().parent
