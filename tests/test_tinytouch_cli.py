@@ -1,9 +1,11 @@
 """Focused protocol-6 tests for the host state machine."""
 
 import base64
+import contextlib
 import hashlib
 import importlib.machinery
 import importlib.util
+import io
 import json
 import os
 import tempfile
@@ -149,7 +151,7 @@ class ProtocolSixTests(unittest.TestCase):
             root, manifest = cli.update_release()
         self.assertEqual(
             root,
-            "https://github.com/ZimengXiong/tinyTouch/releases/download/v0.1.10-prod",
+            f"{cli.RELEASE_DOWNLOAD_URL}/v0.1.10-prod",
         )
         self.assertEqual(manifest["version"], "0.1.10-prod")
         self.assertIn("?nocache=", download.call_args_list[0].args[0])
@@ -159,7 +161,7 @@ class ProtocolSixTests(unittest.TestCase):
 
     def test_cli_update_pins_installer_and_firmware_to_one_release(self):
         target_version = "9.9.9-prod"
-        root = f"https://github.com/ZimengXiong/tinyTouch/releases/download/v{target_version}"
+        root = f"{cli.RELEASE_DOWNLOAD_URL}/v{target_version}"
         manifest = {"version": target_version, "ota": {}}
         args = SimpleNamespace(port=None, firmware_only=False, release_version=None)
         installer_result = SimpleNamespace(returncode=0)
@@ -167,6 +169,7 @@ class ProtocolSixTests(unittest.TestCase):
             returncode=0, stdout=f"tinyTouch CLI {target_version}\n"
         )
         with (
+            mock.patch.object(cli, "FROZEN", True),
             mock.patch.object(cli, "update_release", return_value=(root, manifest)),
             mock.patch.object(cli, "download", return_value=b"installer") as download,
             mock.patch.object(
@@ -189,6 +192,133 @@ class ProtocolSixTests(unittest.TestCase):
                 target_version,
             ],
         )
+
+    def test_network_test_passes_before_the_first_release_exists(self):
+        output = io.StringIO()
+        with (
+            mock.patch.object(cli, "download", side_effect=cli.ReleaseNotFound("none")),
+            contextlib.redirect_stdout(output),
+        ):
+            cli.network_test()
+        self.assertIn("no release published yet", output.getvalue())
+
+    def test_network_test_still_fails_when_a_published_asset_is_missing(self):
+        latest = json.dumps({"version": "9.9.9-prod"}).encode()
+        with (
+            mock.patch.object(
+                cli, "download", side_effect=[latest, latest, cli.ReleaseNotFound("gone")]
+            ),
+            self.assertRaises(cli.ReleaseNotFound),
+        ):
+            cli.network_test()
+
+    def test_download_reports_a_missing_release_distinctly(self):
+        missing = cli.urllib.error.HTTPError("https://x", 404, "Not Found", None, None)
+        with (
+            mock.patch.object(cli.urllib.request, "urlopen", side_effect=missing),
+            self.assertRaises(cli.ReleaseNotFound),
+        ):
+            cli.download("https://x")
+        refused = cli.urllib.error.HTTPError("https://x", 500, "Server Error", None, None)
+        with (
+            mock.patch.object(cli.urllib.request, "urlopen", side_effect=refused),
+            self.assertRaisesRegex(cli.ToolError, "Could not download"),
+        ):
+            cli.download("https://x")
+
+    def test_checkout_update_skips_the_binary_installer(self):
+        image = b"firmware"
+        digest = hashlib.sha256(image).hexdigest()
+        manifest = {
+            "version": "9.9.9-prod",
+            "protocol": cli.CURRENT_PROTOCOL,
+            "ota": {"file": "tiny_touch_unified.bin", "sha256": digest},
+        }
+        args = SimpleNamespace(port=None, firmware_only=False, release_version=None)
+        launch_agent = mock.MagicMock()
+        launch_agent.exists.return_value = False
+        output = io.StringIO()
+        with (
+            mock.patch.object(cli, "FROZEN", False),
+            mock.patch.object(cli, "update_release", return_value=("https://release", manifest)),
+            mock.patch.object(cli, "LAUNCH_AGENT", launch_agent),
+            mock.patch.object(cli, "choose_port", return_value="/dev/cu.TT-1234"),
+            mock.patch.object(cli, "status", return_value={"protocol": "6", "firmware": "x"}),
+            mock.patch.object(cli, "protocol6"),
+            mock.patch.object(cli, "download", return_value=image) as download,
+            mock.patch.object(cli, "stage_ota") as stage_ota,
+            mock.patch.object(cli, "notify"),
+            mock.patch.object(cli.subprocess, "run") as run,
+            mock.patch.object(cli.os, "execv") as execv,
+            contextlib.redirect_stdout(output),
+        ):
+            cli.command_update(args)
+        download.assert_called_once_with("https://release/tiny_touch_unified.bin")
+        run.assert_not_called()
+        execv.assert_not_called()
+        stage_ota.assert_called_once_with("/dev/cu.TT-1234", image, digest)
+        self.assertIn("git pull", output.getvalue())
+
+    def test_checkout_update_refuses_a_newer_protocol(self):
+        manifest = {"version": "9.9.9-prod", "protocol": cli.CURRENT_PROTOCOL + 1, "ota": {}}
+        args = SimpleNamespace(port=None, firmware_only=False, release_version=None)
+        with (
+            mock.patch.object(cli, "FROZEN", False),
+            mock.patch.object(cli, "update_release", return_value=("https://release", manifest)),
+            mock.patch.object(cli, "stage_ota") as stage_ota,
+            self.assertRaisesRegex(cli.ToolError, "git pull"),
+        ):
+            cli.command_update(args)
+        stage_ota.assert_not_called()
+
+    def flash_manifest(self, image: bytes) -> dict:
+        return {
+            "version": "9.9.9-prod",
+            "firmware": {"factory": {"fullImage": {
+                "file": "tiny_touch_factory_full.bin",
+                "size": len(image),
+                "sha256": hashlib.sha256(image).hexdigest(),
+            }}},
+        }
+
+    def test_flash_writes_the_verified_release_image(self):
+        image = b"full-image"
+        args = SimpleNamespace(port=None, erase=True, release_version=None)
+        with (
+            mock.patch.object(cli, "update_release",
+                              return_value=("https://release", self.flash_manifest(image))),
+            mock.patch.object(cli, "download", return_value=image) as download,
+            mock.patch.object(cli, "choose_port", return_value="/dev/cu.usbmodem1"),
+            mock.patch.object(cli, "esptool_command", return_value=["esptool"]),
+            mock.patch.object(cli, "unload_helper", return_value=True),
+            mock.patch.object(cli, "load_helper") as load_helper,
+            mock.patch.object(cli.subprocess, "run",
+                              return_value=SimpleNamespace(returncode=0)) as run,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            cli.command_flash(args)
+        download.assert_called_once_with("https://release/tiny_touch_factory_full.bin")
+        command = run.call_args.args[0]
+        self.assertEqual(
+            command[:-1],
+            ["esptool", "--chip", "esp32s3", "--port", "/dev/cu.usbmodem1",
+             "--baud", "921600", "write_flash", "--erase-all", "0x0"],
+        )
+        self.assertTrue(command[-1].endswith("tiny_touch_factory_full.bin"))
+        load_helper.assert_called_once_with()
+
+    def test_flash_refuses_an_image_that_does_not_match_the_manifest(self):
+        args = SimpleNamespace(port=None, erase=False, release_version=None)
+        with (
+            mock.patch.object(cli, "update_release",
+                              return_value=("https://release", self.flash_manifest(b"expected!"))),
+            mock.patch.object(cli, "download", return_value=b"tampered!"),
+            mock.patch.object(cli.subprocess, "run") as run,
+            contextlib.redirect_stdout(io.StringIO()),
+            self.assertRaisesRegex(cli.ToolError, "does not match"),
+        ):
+            cli.command_flash(args)
+        run.assert_not_called()
 
     def test_firmware_update_refreshes_an_existing_hid_helper(self):
         image = b"firmware"

@@ -5,6 +5,7 @@
 #include "config_console.h"
 #include "device_config.h"
 #include "fingerprint.h"
+#include "haptic.h"
 #include "piv.h"
 #include "touch_pin_hid.h"
 #include "usb_ccid.h"
@@ -12,6 +13,7 @@
 void app_main(void) {
   ESP_ERROR_CHECK(nvs_flash_init());
   device_config_init();
+  haptic_init();
   fingerprint_init();
   // Prime the sensor's live-detection state before the HID task begins. This
   // is the same probe STATUS performs; doing it at boot avoids requiring a

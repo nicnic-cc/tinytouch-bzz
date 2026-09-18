@@ -1,40 +1,31 @@
-**this is a fork of [ZimengXiong/tinyTouch](https://github.com/ZimengXiong/tinyTouch).**
-see [changed from upstream](#changed-from-upstream) for what's different here.
+**this is a fork of [ZimengXiong/tinyTouch](https://github.com/ZimengXiong/tinyTouch)**, based on upstream 0.1.24.
+See [changed from upstream](#changed-from-upstream) for what's different here, and [FORK.md](.claude/FORK.md) for how the fork is maintained.
 
-<img width="2304" height="1152" alt="tinyTouch (4)" src="https://github.com/user-attachments/assets/ec66ec7d-3e14-4292-8085-15374e349057" />
+# tinytouch-bzz
+Authenticate, sudo, and log in with your fingerprint wire(less)ly without having to spend $149 and have it bzz on finger read with a haptic motor.
 
-# tinytouch
-authenticate, sudo, and log in with your fingerprint wire(less)ly without having
-to spend $149.
+Build guide (upstream): https://www.youtube.com/watch?v=YsP1hRg28Gw
 
-build guide: https://www.youtube.com/watch?v=YsP1hRg28Gw
-
-https://github.com/user-attachments/assets/efede271-6d84-441d-919c-f5532f687c4e
-
-PIV authentication of sudo:
-
-https://github.com/user-attachments/assets/c197dd9c-81e5-4150-9793-d2e445651dfd
-
-PIV authentication of lockscreen (you know its PIV because it says PIN and not password in the entry field) (the typing is just the PIV PIN, which we bypass (since we gate by the fingerprint), read below to learn more about it)
-
-https://github.com/user-attachments/assets/88014cb2-34d2-4d63-8998-54f0561364eb
-
-## table of contents
+## Table of contents
 
 - [red pill or blue pill?](#red-pill-or-blue-pill)
 - [install](#install)
   - [flash](#flash)
   - [configure](#configure)
+  - [update](#update)
+  - [build from source](#build-from-source)
 - [hardware](#hardware)
 - [wiring](#wiring)
+- [recovery](#recovery)
+- [cli reference](#cli-reference)
 - [notes](#notes)
 - [changed from upstream](#changed-from-upstream)
 
-## red pill or blue pill?
+## Red pill or blue pill?
 
-there are two ways to use tinytouch on your computer: `HID` and `PIV/PAM` mode. read about how they work in the sections below.
+There are two ways to use tinytouch-bzz on your computer: `HID` and `PIV/PAM` mode. Read about how they work in the sections below.
 
-each has its advantages, and we want to scare you a tiny bit so you actually do
+Each has its advantages, and we want to scare you a tiny bit so you actually do
 your diligence and understand the security implications of such a device before
 you decide whether you are willing to take on the risks:
 
@@ -49,8 +40,8 @@ you decide whether you are willing to take on the risks:
 
 | security | HID | PIV/PAM* |
 | -- | -- | -- |
-| fingerprint sensor <-> esp | 🔴 (unauth'ed UART) | 🔴 (unauth'ed UART) |
-| esp <-> computer negotiation | 🟢 (shared-key mac/encryption) | 🔴 (plain usb ccid/apdu) |
+| fingerprint sensor <-> esp32| 🔴 (unauth'ed UART) | 🔴 (unauth'ed UART) |
+| esp32<-> computer negotiation | 🟢 (shared-key mac/encryption) | 🔴 (plain usb ccid/apdu) |
 | authentication | 🔴 (password typed over hid) | 🟢 (piv challenge/response) |
 
 | attack | HID | PIV/PAM* |
@@ -69,143 +60,172 @@ you decide whether you are willing to take on the risks:
 authorization is still gated by your fingerprint. the PIV PIN is not your
 password, and is not considered sensitive in our scenario.
 
-^this is the major security issue with this device. since all authentication
-happens inside the fingerprint sensor, and the sensor communicates with the esp
-over unauthenticated uart, it can be easily spoofed. basic countermeasures
-involve filling the insides of the device with black epoxy. a more proper fix
+^This is the major security issue with this device. since all authentication
+happens inside the fingerprint sensor, and the sensor communicates with the esp32
+over unauthenticated uart, it can be easily spoofed. Basic countermeasures
+involve filling the insides of the device with black epoxy. A more proper fix
 would be upgrading to a more secure fingerprint sensor.
 
-### so... which pill, if any?
+### So... which pill, if any?
 this depends on:
 
-1. your security tolerance
-2. your environment
-3. current/future criminal background
-4. family/roommate relations
-5. technical skill set of family members/roommates
+1. Your security tolerance
+2. Your environment
+3. Current/future criminal background
+4. Family/roommate relations
+5. Technical skill set of family members/roommates
 
-risks are low to begin with since every attack here requires *physical access* to
-both the device and your mac.
+Risks are low to begin with since every attack here requires *physical access* to
+both the device and your Mac.
 
-so ask yourself: will your device ever leave your desk? can your roommates
-perform a flash dump in half an hour? how about your family members? do they have
-anything against you that would create a motive? are you wanted by any government
-agency? are you protecting sensitive or classified information? are you using a
-company device? would you be personally implicated if you leaked company secrets?
+So ask yourself:
+- Will your device ever leave your desk?
+- Can your roommates perform a flash dump in half an hour?
+- How about your family members?
+- Do they have anything against you that would create a motive?
+- Are you wanted by any government agency?
+- Are you protecting sensitive or classified information?
+- Are you using a company device or would you be personally implicated if you leaked company secrets?
 
-if the answer is yes to any of the above questions, i think the magic keyboard presents an excellent value at $149 and is worth the added security.
+If the answer is yes to any of the above questions, I think the Apple's Magic Keyboard presents an excellent value at $149 and is worth the added security.
 
-if the answer is no, chances are you will be fine with a slightly insecure method
-of authentication. personally, i am happy with the red pill and love the
-convenience of having it work everywhere.
+If the answer is no, chances are you will be fine with a slightly insecure method
+of authentication.
 
-### hid mode
+### HID mode
 
-in hid mode, the esp acts like a usb keyboard.
+In HID mode, the esp32 acts like a usb keyboard:
+- The Mac helper keeps your real password encrypted and stored on your Mac
+- This way, an attacker cannot extract your password from the esp32 alone
+- The esp32 keeps a shared pairing key
+- After a fingerprint match, the esp32 sends a signed request to the helper, the helper checks it, encrypts the password for that one request, and sends it back
+- The esp32 decrypts it in RAM, types it, then wipes it
 
-the mac helper keeps your real password encrypted and stored on your mac. this
-way, an attacker cannot extract your password from the esp alone. the esp keeps a
-shared pairing key. after a fingerprint match, the esp sends a signed request to
-the helper, the helper checks it, encrypts the password for that one request, and
-sends it back. the esp decrypts it in ram, types it, then wipes it.
+This is why it works almost everywhere. It is also why it is scary: the final step is still your real password being typed into whatever has focus.
 
-this is why it works almost everywhere. it is also why it is scary: the final
-step is still your real password being typed into whatever has focus.
+To make it less bad:
+- The esp32 never stores the password
+- Requests use a nonce and Mac so old requests cannot just be replayed, and the helper only sends back an encrypted one-time response
+- The password only exists on the esp32 briefly in RAM.
 
-to make it less bad, the esp never stores the password. requests use a nonce and
-mac so old requests cannot just be replayed, and the helper only sends back an
-encrypted one-time response. the password only exists on the esp briefly in ram.
+### PIV mode
 
-### piv mode
+In piv mode, the esp32 acts like a USB Smart Card:
+- macOS sends normal piv commands over CCID
+- When macOS needs authentication, it asks the card to use the piv private key
+- The esp32 only allows that key operation right after a fingerprint match.
 
-in piv mode, the esp acts like a usb smart card.
+macOS also expects a piv pin, so the firmware has a tiny HID side path that types
+the dummy pin `111111`. That pin is not your macOS password. It is just there to
+get through the macOS PIV prompt while the real authorization is the fingerprint
+gate around the PIV key.
 
-macos sends normal piv commands over ccid. when macos needs authentication, it
-asks the card to use the piv private key. the esp only allows that key operation
-right after a fingerprint match.
-
-macos also expects a piv pin, so the firmware has a tiny hid side path that types
-the dummy pin `000000`. that pin is not your mac password. it is just there to
-get through the macos piv prompt while the real authorization is the fingerprint
-gate around the piv key.
-
-this avoids typing your real password, but only works where macos accepts smart
+This avoids typing your real password, but only works where macOS accepts smart
 cards, like login and `sudo` with pam.
 
-## install
+## Install
 
-tinyTouch ships as one firmware image ([`firmware/tiny_touch_unified`](firmware/tiny_touch_unified))
-that supports both HID and PIV mode. flash it once, then choose - or later
-switch - mode through the `tinytouch` CLI. there is no separate firmware per
-mode anymore.
+tinytouch-bzz ships as one firmware image ([`firmware/tiny_touch_unified`](firmware/tiny_touch_unified))
+that supports both HID and PIV mode. Flash it once, then choose - or later
+switch - mode through the `tinytouch` CLI.
 
-note: the `docs.tinytouch.dev` links below (and the build guide video above)
-point to upstream's hosted docs, not something this fork maintains - they
-still apply since the flashing/CLI/setup flow here is unchanged from upstream.
-
-### flash
-
-**build from source:** follow [`firmware/README.md`](firmware/README.md) for
-the ESP-IDF 5.3.x setup.
-
-then, from the repo root:
+Everything runs from a clone of this repo. No ESP-IDF toolchain is needed:
 
 ```sh
-./firmware/build-and-flash
+git clone https://github.com/nicnic-cc/tinytouch-bzz.git
+cd tinytouch-bzz
 ```
 
-once flashing finishes, **unplug and reconnect USB once.** the
+### Flash
+
+1. Put the board in download mode: hold **BOOT** while plugging in USB, or
+   hold **BOOT**, tap **RESET**, then release **BOOT**.
+2. Flash the latest [release](https://github.com/nicnic-cc/tinytouch-bzz/releases/latest):
+
+```sh
+./tinytouch flash
+```
+
+It downloads the signed release image, checks it against the release
+manifest, and writes it with the bundled `esptool`. The first run creates a
+private `.venv/` in the repo for its Python dependencies.
+
+Once flashing finishes, **unplug and reconnect USB once.** The
 fingerprint sensor stays powered through an MCU reset, so the device won't
 respond to setup until it sees a fresh USB reconnect.
 
-### configure
+### Configure
 
-from the repo root:
+From the repo root:
 
 ```sh
 ./tinytouch setup
 ```
 
-follow the prompts. it walks you through:
+Follow the prompts. it walks you through:
 
-- choosing **PIV** or **HID** mode - see
+- Choosing **PIV** or **HID** mode - see
   [red pill or blue pill?](#red-pill-or-blue-pill) above for the trade-offs
 - PIV: creating the on-device PIV identity and pairing it with `sc_auth`
 - HID: setting the Keychain password tinyTouch will type, and installing its
   background helper
-- enrolling your fingerprint (four touches, different views)
+- Enrolling your fingerprint (four touches, different views)
 
-switch modes later with `tinytouch mode piv` / `tinytouch mode hid`. full
-command reference:
-[docs.tinytouch.dev/reference/cli](https://docs.tinytouch.dev/reference/cli).
-if setup won't complete, see
-[docs.tinytouch.dev/customer/recovery](https://docs.tinytouch.dev/customer/recovery).
+Switch modes later with `tinytouch mode piv` / `tinytouch mode hid`. See
+[cli reference](#cli-reference) below for the full command list.
 
-## hardware
+If setup reports a fingerprint already enrolled, or won't complete at all,
+see [recovery](#recovery) below.
+
+### Update
+
+```sh
+git pull
+./tinytouch update
+```
+
+`git pull` updates the CLI and helper. `tinytouch update` then downloads the
+latest release firmware and stages it over USB after a fingerprint touch.
+Unplug and reconnect the device once to boot it.
+
+### Build from source
+
+Only needed if you want to change the firmware. Follow
+[`firmware/README.md`](firmware/README.md) for the ESP-IDF 5.3.x setup, then:
+
+```sh
+./firmware/build-and-flash
+```
+
+**A self-built image is off the update track.** The device only accepts an
+OTA image signed with the same key as the firmware it is running, and your
+local build is signed with your own key. `tinytouch update` will be rejected
+until you put the device back on a release image with `./tinytouch flash`.
+
+## Hardware
 
 | part | used here | notes |
 | -- | -- | -- |
-| microcontroller | seeed studio esp32-s3 | needs native usb and hardware uart. secure boot + flash encryption strongly recommended |
+| microcontroller | seeed studio esp32-s3 | needs native usb and hardware uart. secure boot + flash encryption strongly recommended, but release images ship with both off |
 | fingerprint sensor | zw101-style uart sensor | uses the common `0xef01` packet protocol |
-| computer | macos | hid mode needs the helper. piv/pam mode needs macos smart card support |
+| computer | macOS | hid mode needs the helper. piv/pam mode needs macOS smart card support |
 | case | printed top/bottom stl | `hardware/case/case_top.stl` and `hardware/case/case_bottom.stl` |
+| haptic motor (optional) | coin ERM vibration motor module with onboard driver | 3-pin GND/VCC/IN header, buzzes on match/non-match, see [wiring](#wiring) |
 | wiring/solder/etc | misc | whatever your build needs |
 
-other esp32-s3 boards should work if the usb and uart pins are available. other
-fingerprint sensors may work if they speak the same uart protocol. other
-microcontroller families can work, but are not currently supported.
+- Other esp32-s3 boards should work if the usb and uart pins are available
+- Other fingerprint sensors may work if they speak the same uart protocol
+- Other microcontroller families can work, but are not currently supported.
 
-## wiring
+## Wiring
 
-the fingerprint sensor connects over uart to pins 6 and 7 for tx and rx.
+The fingerprint sensor connects over uart: GPIO43 (tx) and GPIO44 (rx), which
+are pins D6 and D7 on the XIAO. The touch interrupt is on GPIO2 (D1).
 
-the interrupt pin can be connected anywhere. in firmware, it is connected to pin
-1.
+Use an esp32-s3 super mini or seeed studio xiao esp32-s3 with a zw101-style uart
+fingerprint sensor. Use 3.3v power and logic.
 
-use an esp32-s3 super mini or seeed studio xiao esp32-s3 with a zw101-style uart
-fingerprint sensor. use 3.3v power and logic.
-
-### wire the sensor
+### Wire the sensor
 
 | sensor pin | signal | esp32-s3 | XIAO |
 | -- | -- | -- | -- |
@@ -216,15 +236,133 @@ fingerprint sensor. use 3.3v power and logic.
 | 5 | RX | GPIO43 (TX) | D6 |
 | 6 | GND | GND | GND |
 
-the uart pair is crossed: sensor tx goes to board rx. sensor rx goes to board tx.
+- The UART pair is crossed: sensor TX goes to board RX. sensor RX goes to board TX
+- Check continuity. confirm that 3V3 and GND are not shorted before connecting USB
 
-check continuity. confirm that 3v3 and gnd are not shorted before connecting usb.
+### Wire the haptic motor (optional)
 
-## notes
+A small vibration motor module (onboard mosfet driver + flyback diode, 3-pin
+gnd/vcc/in header) buzzes once on a fingerprint match and twice on a
+non-match, including during enrollment and `tinytouch` approval touches.
+It's optional - the firmware still works fine without one wired up.
+
+| module pin | esp32-s3 | XIAO |
+| -- | -- | -- |
+| GND | GND | GND |
+| VCC | 5V (if broken out), otherwise 3V3 | 5V, otherwise 3V3 |
+| IN | GPIO4 | D3 |
+
+5V gives the strongest, most reliable buzz; 3.3v will likely still work but
+may feel weaker.
+
+## Recovery
+
+Recovery erases fingerprints, keys, pairings, settings, and firmware state.
+Try this first:
+
+```sh
+tinytouch status --verbose
+tinytouch factory-reset
+```
+
+If the device still can't be set up - it's unresponsive, or setup keeps
+failing after a factory reset - erase it and reflash the release firmware:
+
+1. Disconnect tinyTouch.
+2. Put it in download mode: hold **BOOT** while reconnecting USB, or hold
+   **BOOT**, tap **RESET**, then release **BOOT**.
+3. Erase and reflash it:
+   ```sh
+   ./tinytouch flash --erase
+   ```
+4. Unplug and reconnect the device, wait 20 seconds, then run
+   `tinytouch setup`.
+
+Use `tinytouch update` for routine firmware updates - recovery is only for
+when a factory reset isn't enough.
+
+## CLI reference
+
+Run `tinytouch <command> --help` for command help. Most commands accept
+`--port /dev/cu.usbmodem...` to pick a device; the top-level `--verbose` flag
+shows diagnostic output.
+
+### Setup
+
+```sh
+tinytouch setup
+tinytouch setup --mode piv
+tinytouch setup --mode hid
+tinytouch setup --skip-enroll
+tinytouch mode piv
+tinytouch mode hid
+```
+
+### Status
+
+```sh
+tinytouch status
+tinytouch status --verbose
+tinytouch test
+tinytouch logs
+```
+
+### Fingerprints
+
+```sh
+tinytouch enroll 1
+tinytouch delete 1
+```
+
+### PIV
+
+```sh
+tinytouch pair
+tinytouch keys
+```
+
+### HID
+
+```sh
+tinytouch computers
+tinytouch computers remove <host-id>
+tinytouch config typing_delay_ms 12
+tinytouch config submit_enter off
+tinytouch config touch_cooldown_ms 1000
+```
+
+### Firmware
+
+```sh
+tinytouch update
+tinytouch flash
+tinytouch flash --erase
+tinytouch flash --release-version 1.0.0-prod
+tinytouch rom
+tinytouch factory-reset
+```
+
+`tinytouch flash` writes a release image to a device in download mode.
+`tinytouch rom` (alias `tinytouch bootloader`) just reminds you how to get
+the device into download mode first.
+
+## Notes
 
 [cad](https://cad.onshape.com/documents/d0e6bb7977e6171d4e4a5086/w/1ded27ad6c634fd1fdaf26d0/e/aca67210e400490a08d0b29a?renderMode=0&uiState=6a4c1df32e292f12144a65fe). if you make changes, please make them open source as well.
 
-## changed from upstream
+## Changed from upstream
 
-- fingerprint sensor LED is off during normal idle/waiting-for-touch and after match results, instead of staying lit (`firmware/tiny_touch_unified/main/fingerprint.c`, `set_aura_off`/`fingerprint_led_idle`). on successful sensor init it flashes white once (`fingerprint_led_connect_flash`) to confirm the device came up correctly, then goes dark. match/enroll attempts still flash green (success) or red (failure) before returning to off. enrollment still lights white while waiting for a touch.
-- normal PIV logins now allow the 9d (key management) slot to be used twice per touch instead of once (`firmware/tiny_touch_unified/main/piv.c`, `piv_note_user_presence`/`handle_general_authenticate`). macOS unwraps the Login Keychain secret with a second, separate 9d decrypt beyond the initial PIV auth; the old one-operation-per-slot limit rejected that second call with SW 6982, so macOS silently fell back to prompting for the keychain password on every unlock even after a successful `sc_auth pair`. 9a (auth) still gets one operation per touch, and the pairing/configuration window is unchanged.
+- No docs site, web flasher, or hosted API. Releases live on this repo's GitHub releases page, `tinytouch flash` replaces the web flasher, and `tinytouch update` run from a clone updates firmware only and leaves the CLI to `git pull`
+
+- Fingerprint sensor LED is off during normal idle/waiting-for-touch and after match results, instead of staying lit (`firmware/tiny_touch_unified/main/fingerprint.c`, `set_aura_off`/`fingerprint_led_idle`)
+  - On successful sensor init it flashes white once (`fingerprint_led_connect_flash`) to confirm the device came up correctly, then goes dark
+  - Match/enroll attempts still flash green (success) or red (failure) before returning to off
+  - Enrollment still lights white while waiting for a touch
+- Normal PIV logins now allow the 9d (key management) slot to be used twice per touch instead of once (`firmware/tiny_touch_unified/main/piv.c`, `piv_note_user_presence`/`handle_general_authenticate`).
+  - macOS unwraps the Login Keychain secret with a second, separate 9d decrypt beyond the initial PIV auth
+  - The old one-operation-per-slot limit rejected that second call with SW 6982, so macOS silently fell back to prompting for the keychain password on every unlock even after a successful `sc_auth pair`
+  - 9a (auth) still gets one operation per touch, and the pairing/configuration window is unchanged
+- Added optional haptic feedback for a coin vibration motor module wired to GPIO4 (`firmware/tiny_touch_unified/main/haptic.c`):
+  - One buzz on a fingerprint match, two short buzzes on a non-match
+  - This also fixes a real gap - the everyday HID/PIV touch path (`touch_pin_hid.c`) previously gave no feedback at all on a failed read, silently waiting for the next touch 
+  - The motor is optional, without one wired up the GPIO just toggles unobserved

@@ -50,8 +50,9 @@ arch -x86_64 /usr/bin/env \
 
 git tag -a "$tag" -m "tinyTouch $version"
 git push origin "refs/tags/$tag"
+repository="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
 gh release create "$tag" "$publish_root/assets/"* \
-  --repo ZimengXiong/tinyTouch --verify-tag --generate-notes --draft
-gh release edit "$tag" --repo ZimengXiong/tinyTouch --draft=false --latest
+  --repo "$repository" --verify-tag --generate-notes --draft
+gh release edit "$tag" --repo "$repository" --draft=false --latest
 
 print "Published $tag locally in $((SECONDS - started))s."

@@ -12,9 +12,13 @@ void fingerprint_init(void);
 bool fingerprint_is_ready(void);
 bool fingerprint_recover(void);
 bool fingerprint_present_hint(void);
-void fingerprint_led_idle(void);
 void fingerprint_led_connect_flash(void);
 fingerprint_match_t fingerprint_authorize_poll_match(void);
+// Result feedback for a poll: aura and motor together, ending with the aura
+// off. The poll itself stays silent so background presence checks cannot
+// flash or buzz.
+void fingerprint_feedback_success(void);
+void fingerprint_feedback_fail(void);
 bool fingerprint_authorize_prompted(void (*prompt)(void));
 bool fingerprint_prompted_authorization_active(void);
 int fingerprint_count(void);

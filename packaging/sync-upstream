@@ -1,0 +1,86 @@
+#!/bin/zsh
+# Stage a merge of upstream tinyTouch into this fork. Never commits.
+set -euo pipefail
+
+project_dir="${0:A:h:h}"
+cd "$project_dir"
+
+upstream_url="https://github.com/ZimengXiong/tinyTouch.git"
+upstream_ref="${1:-upstream/main}"
+
+# Removed from this fork on purpose. Upstream edits to them are dropped.
+removed_paths=(
+  docs
+  software/api
+  software/macos-helper/launchd
+  .github/workflows/docs.yml
+  .github/FUNDING.yml
+  packaging/sync-docs-release.py
+  packaging/run-local-ota-hardware-test.sh
+  firmware/tiny_touch_unified/README.md
+  firmware/tiny_touch_unified/main/secrets.example.h
+)
+# Owned by this fork. Conflicts always resolve to the fork's copy.
+fork_owned=(VERSION README.md .github/CODEOWNERS channels/batch-0.json)
+
+if [[ "${1:-}" = --help || "${1:-}" = -h ]]; then
+  print "Usage: packaging/sync-upstream [ref]   (default: upstream/main)"
+  print "Stages a merge of upstream, resolves the fork's known conflicts, runs the tests."
+  exit 0
+fi
+
+git diff --quiet -- && git diff --cached --quiet -- || {
+  print -u2 "Commit or stash your changes before syncing upstream."
+  exit 1
+}
+git remote get-url upstream >/dev/null 2>&1 || git remote add upstream "$upstream_url"
+git fetch --quiet upstream
+
+if git merge-base --is-ancestor "$upstream_ref" HEAD; then
+  print "Already up to date with $upstream_ref."
+  exit 0
+fi
+print "Upstream commits to merge:"
+git --no-pager log --oneline "HEAD..$upstream_ref"
+print
+
+git merge --no-commit --no-ff "$upstream_ref" >/dev/null 2>&1 || true
+
+for removed in $removed_paths; do
+  if [[ -e "$removed" ]] || [[ -n "$(git ls-files -- "$removed")" ]]; then
+    git rm -rq --cached --ignore-unmatch -- "$removed"
+    rm -rf -- "$removed"
+  fi
+done
+for owned in $fork_owned; do
+  if [[ -n "$(git ls-files --unmerged -- "$owned")" ]]; then
+    git checkout --ours -- "$owned"
+    git add -- "$owned"
+  fi
+done
+
+conflicts=("${(@f)$(git diff --name-only --diff-filter=U)}")
+conflicts=(${conflicts:#})
+if (( ${#conflicts} )); then
+  print "Resolve these by hand, then 'git add' them:"
+  for conflict in $conflicts; do print "  $conflict"; done
+  print
+  print "Then run the tests and 'git commit'. Use 'git merge --abort' to back out."
+  exit 1
+fi
+
+python_bin="$project_dir/.venv/bin/python"
+[[ -x "$python_bin" ]] || python_bin=python3
+print "No conflicts left. Running the tests..."
+"$python_bin" -m unittest discover -s tests
+print
+# Clean merges can still carry upstream contact details and URLs into the fork.
+residue="$(git grep -nIiE 'alpacaengineer|tinytouch\.dev|github\.com/ZimengXiong' -- \
+  ':!README.md' ':!.claude/FORK.md' ':!packaging/sync-upstream' || true)"
+if [[ -n "$residue" ]]; then
+  print "Upstream references came in with the merge. Remove or replace them:"
+  print -r -- "$residue"
+  print
+fi
+print "Merge is staged. Review 'git diff --cached', revert anything you do not want,"
+print "update the 'based on upstream' line in README.md, then 'git commit'."

@@ -2,7 +2,7 @@
 # tinyTouch installer for macOS.
 set -eu
 
-release_root="${TINYTOUCH_RELEASE_ROOT:-https://github.com/ZimengXiong/tinyTouch/releases/latest/download}"
+release_root="${TINYTOUCH_RELEASE_ROOT:-https://github.com/nicnic-cc/tinytouch-bzz/releases/latest/download}"
 work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT HUP INT TERM
 
@@ -80,7 +80,6 @@ curl -fsSL "$release_url" -o "$work_dir/tinytouch.tar.gz"
 actual_sha256="$(shasum -a 256 "$work_dir/tinytouch.tar.gz" | awk '{print $1}')"
 if [ "$actual_sha256" != "$release_sha256" ]; then
   echo 'Download checksum did not match. Stopping.' >&2
-  echo 'Contact tinytouch@alpacaengineer.ing if this continues.' >&2
   exit 1
 fi
 

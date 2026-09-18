@@ -5,6 +5,7 @@ idf_component_register(
     "device_config.c"
     "fingerprint.c"
     "firmware_update.c"
+    "haptic.c"
     "piv.c"
     "touch_pin_hid.c"
     "usb_ccid.c"
