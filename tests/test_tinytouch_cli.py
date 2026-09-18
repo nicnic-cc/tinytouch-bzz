@@ -193,6 +193,39 @@ class ProtocolSixTests(unittest.TestCase):
             ],
         )
 
+    def test_network_test_passes_before_the_first_release_exists(self):
+        output = io.StringIO()
+        with (
+            mock.patch.object(cli, "download", side_effect=cli.ReleaseNotFound("none")),
+            contextlib.redirect_stdout(output),
+        ):
+            cli.network_test()
+        self.assertIn("no release published yet", output.getvalue())
+
+    def test_network_test_still_fails_when_a_published_asset_is_missing(self):
+        latest = json.dumps({"version": "9.9.9-prod"}).encode()
+        with (
+            mock.patch.object(
+                cli, "download", side_effect=[latest, latest, cli.ReleaseNotFound("gone")]
+            ),
+            self.assertRaises(cli.ReleaseNotFound),
+        ):
+            cli.network_test()
+
+    def test_download_reports_a_missing_release_distinctly(self):
+        missing = cli.urllib.error.HTTPError("https://x", 404, "Not Found", None, None)
+        with (
+            mock.patch.object(cli.urllib.request, "urlopen", side_effect=missing),
+            self.assertRaises(cli.ReleaseNotFound),
+        ):
+            cli.download("https://x")
+        refused = cli.urllib.error.HTTPError("https://x", 500, "Server Error", None, None)
+        with (
+            mock.patch.object(cli.urllib.request, "urlopen", side_effect=refused),
+            self.assertRaisesRegex(cli.ToolError, "Could not download"),
+        ):
+            cli.download("https://x")
+
     def test_checkout_update_skips_the_binary_installer(self):
         image = b"firmware"
         digest = hashlib.sha256(image).hexdigest()

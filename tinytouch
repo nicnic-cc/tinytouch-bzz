@@ -24,6 +24,7 @@ import tempfile
 import threading
 import tty
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -68,6 +69,10 @@ _active_serial = None
 
 class ToolError(RuntimeError):
     """An actionable error that can be shown directly to the user."""
+
+
+class ReleaseNotFound(ToolError):
+    """The server answered, but the requested release asset does not exist."""
 
 
 class SerialTimeout(ToolError):
@@ -1305,6 +1310,10 @@ def download(url: str) -> bytes:
         )
         with urllib.request.urlopen(request, timeout=20, context=TLS) as response:
             return response.read()
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            raise ReleaseNotFound("No tinyTouch release has been published yet.") from exc
+        raise ToolError("Could not download the tinyTouch release.") from exc
     except OSError as exc:
         raise ToolError("Could not download the tinyTouch release.") from exc
 
@@ -1343,6 +1352,13 @@ def package_test() -> None:
 
 def network_test() -> None:
     """Check the latest stable release and one downloadable OTA asset."""
+    try:
+        download(f"{LATEST_RELEASE_URL}/release-manifest.json?nocache={time.time_ns()}")
+    except ReleaseNotFound:
+        # A verified TLS answer proves the bundled certificates work. Only the
+        # build of the very first release can see this, before anything exists.
+        say("network ok (no release published yet)")
+        return
     try:
         root, manifest = update_release()
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
