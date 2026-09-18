@@ -45,8 +45,14 @@ espsecure.py generate_signing_key --version 2 \
   firmware/tiny_touch_unified/secure_boot_signing_key.pem
 ```
 
-Skip this if you're only flashing pre-built binaries (run `tinytouch update`
-to pull the latest release) rather than building from source.
+Skip this if you're only flashing pre-built binaries (run `./tinytouch flash`
+for the latest release) rather than building from source.
+
+**This key decides which updates the device accepts.** An OTA image is only
+accepted if it is signed with the same key as the firmware already running.
+A device flashed with your own build therefore rejects `tinytouch update`
+from the public releases. Run `./tinytouch flash` to move it back onto the
+release track.
 
 ## 6. Build (and optionally flash)
 

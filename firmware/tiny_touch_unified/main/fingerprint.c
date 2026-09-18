@@ -8,6 +8,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "haptic.h"
 
 static const char *TAG = "fingerprint";
 
@@ -24,6 +25,10 @@ static const uint8_t FP_LED_RED = 0x04;
 static const uint8_t FP_LED_WHITE = 0x01 | 0x02 | 0x04;
 static const uint8_t FP_LED_FUNC_STEADY = 3;
 static const uint8_t FP_LED_FUNC_OFF = 4;
+static const uint32_t SUCCESS_BUZZ_MS = 120;
+static const uint32_t FAIL_BUZZ_MS = 70;
+static const uint32_t FAIL_GAP_MS = 90;
+static const uint32_t RESULT_HOLD_MS = 350;
 
 static SemaphoreHandle_t fp_mutex;
 static volatile bool prompted_authorization_active;
@@ -206,16 +211,56 @@ static void set_aura_off(void) {
   fp_command(0x3c, params, sizeof(params), &confirm, NULL, NULL, 1000);
 }
 
-static void show_result(bool ok) {
-  set_aura(ok ? FP_LED_GREEN : FP_LED_RED);
-  vTaskDelay(pdMS_TO_TICKS(350));
+// Result feedback drives the aura and the motor from one routine so the
+// flashes land on the buzzes. Splitting them across two call sites lets the
+// steady aura outlast the pattern, which reads as one long light, not a blink.
+// Callers must hold the sensor mutex.
+static void indicate_success_locked(void) {
+  set_aura(FP_LED_GREEN);
+  haptic_buzz(SUCCESS_BUZZ_MS);
+  // Guard the unsigned subtraction: a buzz longer than the hold must not wrap.
+  if (RESULT_HOLD_MS > SUCCESS_BUZZ_MS) {
+    vTaskDelay(pdMS_TO_TICKS(RESULT_HOLD_MS - SUCCESS_BUZZ_MS));
+  }
   set_aura_off();
 }
 
-void fingerprint_led_idle(void) {
-  if (!fp_take(1000)) return;
-  set_aura_off();
-  fp_give();
+// Two red flashes on two short buzzes, distinct from the single success pulse.
+static void indicate_fail_locked(void) {
+  for (int i = 0; i < 2; i++) {
+    if (i) vTaskDelay(pdMS_TO_TICKS(FAIL_GAP_MS));
+    set_aura(FP_LED_RED);
+    haptic_buzz(FAIL_BUZZ_MS);
+    set_aura_off();
+  }
+}
+
+static void show_result(bool ok) {
+  if (ok) indicate_success_locked(); else indicate_fail_locked();
+}
+
+// The mutex is free between a poll and its indication, so the public entry
+// points retake it. A busy sensor still buzzes; only the aura is skipped.
+void fingerprint_feedback_success(void) {
+  bool owned = fp_take(1000);
+  if (owned) {
+    indicate_success_locked();
+    fp_give();
+  } else {
+    haptic_buzz(SUCCESS_BUZZ_MS);
+  }
+}
+
+void fingerprint_feedback_fail(void) {
+  bool owned = fp_take(1000);
+  if (owned) {
+    indicate_fail_locked();
+    fp_give();
+  } else {
+    haptic_buzz(FAIL_BUZZ_MS);
+    vTaskDelay(pdMS_TO_TICKS(FAIL_GAP_MS));
+    haptic_buzz(FAIL_BUZZ_MS);
+  }
 }
 
 void fingerprint_led_connect_flash(void) {
@@ -313,7 +358,6 @@ fingerprint_match_t fingerprint_authorize_poll_match(void) {
     return no_match;
   }
   fingerprint_match_t match = fingerprint_match_captured(true);
-  if (match.slot) set_aura(FP_LED_GREEN);
   fp_give();
   return match;
 }
@@ -399,6 +443,7 @@ bool fingerprint_authorize_prompted(void (*prompt)(void)) {
     }
     vTaskDelay(pdMS_TO_TICKS(120));
   }
+  if (ok) fingerprint_feedback_success();
   prompted_authorization_active = false;
   return ok;
 }

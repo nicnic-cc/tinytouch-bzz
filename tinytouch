@@ -20,6 +20,7 @@ import shutil
 import ssl
 import subprocess
 import sys
+import tempfile
 import threading
 import tty
 import time
@@ -45,8 +46,10 @@ PASSWORD_SERVICE = "tinyTouch"
 CURRENT_PROTOCOL = 6
 OTA_CHUNK_SIZE = 3072
 OTA_WRITE_WINDOW = 8
-RELEASE_DOWNLOAD_URL = "https://github.com/nicnic-cc/tinytouch-bzz/releases/download"
-LATEST_RELEASE_URL = "https://github.com/nicnic-cc/tinytouch-bzz/releases/latest/download"
+# The only fork-specific value in this file: every release URL derives from it.
+RELEASE_REPO = "nicnic-cc/tinytouch-bzz"
+RELEASE_DOWNLOAD_URL = f"https://github.com/{RELEASE_REPO}/releases/download"
+LATEST_RELEASE_URL = f"https://github.com/{RELEASE_REPO}/releases/latest/download"
 TLS = ssl.create_default_context(cafile=certifi.where())
 VERBOSE = False
 
@@ -698,7 +701,7 @@ def status(port: str) -> dict[str, str]:
 
 def protocol6(device: dict[str, str]) -> None:
     if not device.get("firmware"):
-        raise ToolError("The device did not report a firmware version. Run 'tinytouch rom' to flash it.")
+        raise ToolError("The device did not report a firmware version. Run 'tinytouch flash' to flash it.")
     try:
         protocol = int(device.get("protocol", "0"))
     except ValueError as exc:
@@ -1374,7 +1377,16 @@ def network_test() -> None:
 def command_update(args: argparse.Namespace) -> None:
     root, manifest = update_release(getattr(args, "release_version", None))
     release_version = manifest["version"]
-    if not getattr(args, "firmware_only", False) and release_version != CLI_VERSION:
+    if not FROZEN:
+        # A git checkout updates itself with git, never with the binary installer.
+        if manifest.get("protocol", CURRENT_PROTOCOL) != CURRENT_PROTOCOL:
+            raise ToolError(
+                f"Release {release_version} needs a newer CLI. Run 'git pull', then update again."
+            )
+        if release_version != CLI_VERSION:
+            say(f"This checkout is {CLI_VERSION}; the release is {release_version}.")
+            say("Run 'git pull' to bring the CLI in line. Updating firmware only.")
+    elif not getattr(args, "firmware_only", False) and release_version != CLI_VERSION:
         say(f"Updating tinyTouch CLI to {release_version}...")
         installer = download(f"{root}/install.sh")
         environment = os.environ.copy()
@@ -1421,12 +1433,73 @@ def command_update(args: argparse.Namespace) -> None:
     say("Unplug tinyTouch and reconnect it once to boot the new firmware.")
 
 
+def esptool_command() -> list[str]:
+    """Return the argv prefix that runs the bundled or checkout esptool."""
+    if FROZEN:
+        return [str(Path(sys.executable)), "_esptool"]
+    return [str(ensure_helper_environment()), "-m", "esptool"]
+
+
+def command_flash(args: argparse.Namespace) -> None:
+    """Write a signed release image over ROM so the device can take OTA updates."""
+    root, manifest = update_release(getattr(args, "release_version", None))
+    firmware = manifest.get("firmware")
+    factory = firmware.get("factory") if isinstance(firmware, dict) else None
+    metadata = factory.get("fullImage") if isinstance(factory, dict) else None
+    if not isinstance(metadata, dict):
+        raise ToolError("The release manifest has no full flash image.")
+    filename = metadata.get("file")
+    size = metadata.get("size")
+    digest = str(metadata.get("sha256", ""))
+    if (
+        not isinstance(filename, str)
+        or Path(filename).name != filename
+        or not isinstance(size, int)
+        or isinstance(size, bool)
+        or size <= 0
+        or not re.fullmatch(r"[0-9a-f]{64}", digest)
+    ):
+        raise ToolError("The release manifest has an invalid full flash image.")
+    say(f"Downloading tinyTouch firmware {manifest['version']}...")
+    image = download(f"{root}/{filename}")
+    if len(image) != size or hashlib.sha256(image).hexdigest() != digest:
+        raise ToolError("The downloaded firmware does not match the release manifest.")
+
+    port = choose_port(args.port)
+    say(f"Flashing {port}. Do not disconnect it until this finishes.")
+    if args.erase:
+        say("All fingerprints, keys, pairings, and settings will be erased.")
+    command = [
+        *esptool_command(),
+        "--chip", "esp32s3", "--port", port, "--baud", "921600",
+        "write_flash",
+    ]
+    if args.erase:
+        command.append("--erase-all")
+    was_loaded = unload_helper()
+    try:
+        with tempfile.TemporaryDirectory() as work:
+            path = Path(work) / filename
+            path.write_bytes(image)
+            result = subprocess.run([*command, "0x0", str(path)], check=False)
+    finally:
+        if was_loaded:
+            load_helper()
+    if result.returncode != 0:
+        raise ToolError(
+            "Flashing failed. Reconnect tinyTouch in download mode "
+            "(hold BOOT while plugging in USB) and run 'tinytouch flash' again."
+        )
+    say("Firmware was written and verified.")
+    say("Unplug tinyTouch and reconnect it normally, then run 'tinytouch setup'.")
+
+
 def command_rom(args: argparse.Namespace) -> None:
     if args.port:
         say(f"Selected device: {args.port}")
     notify("tinyTouch ROM mode", "Unplug tinyTouch, reconnect it in download mode, and flash it.")
-    say("ROM flashing requires a physical reconnect. Unplug tinyTouch, reconnect it in download mode, and flash it.")
-    say("After flashing, unplug and reconnect tinyTouch normally.")
+    say("ROM flashing requires a physical reconnect. Unplug tinyTouch, hold BOOT, and reconnect it.")
+    say("Then run 'tinytouch flash' to write the latest release firmware.")
 
 
 def command_status(args: argparse.Namespace) -> None:
@@ -1640,6 +1713,11 @@ def parser() -> argparse.ArgumentParser:
     update.add_argument("--firmware-only", action="store_true", help=argparse.SUPPRESS)
     update.add_argument("--release-version", help=argparse.SUPPRESS)
     update.set_defaults(func=command_update)
+    flash = sub.add_parser("flash", help="write release firmware to a device in download mode")
+    flash.add_argument("--port")
+    flash.add_argument("--erase", action="store_true", help="erase the whole flash first")
+    flash.add_argument("--release-version", help="flash this release instead of the latest")
+    flash.set_defaults(func=command_flash)
     rom = sub.add_parser("rom", aliases=["bootloader"], help="prepare a physical ROM flash")
     rom.add_argument("--port")
     rom.set_defaults(func=command_rom)
@@ -1676,6 +1754,10 @@ def main() -> int:
         except ToolError as exc:
             say(f"network error: {exc}")
             return 1
+        return 0
+    if len(sys.argv) > 1 and sys.argv[1] == "_esptool":
+        import esptool  # type: ignore
+        esptool.main(sys.argv[2:])
         return 0
     if len(sys.argv) > 1 and sys.argv[1] == "_helper":
         from tinytouch_helper import main as helper_main  # type: ignore
